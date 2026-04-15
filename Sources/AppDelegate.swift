@@ -2275,6 +2275,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     weak var tabManager: TabManager?
     weak var notificationStore: TerminalNotificationStore?
     weak var sidebarState: SidebarState?
+    weak var fileExplorerState: FileExplorerState?
     weak var fullscreenControlsViewModel: TitlebarControlsViewModel?
     weak var sidebarSelectionState: SidebarSelectionState?
     var shortcutLayoutCharacterProvider: (UInt16, NSEvent.ModifierFlags) -> String? = KeyboardLayout.character(forKeyCode:modifierFlags:)
@@ -2536,6 +2537,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let env = ProcessInfo.processInfo.environment
         let isRunningUnderXCTest = isRunningUnderXCTest(env)
         let telemetryEnabled = TelemetrySettings.enabledForCurrentLaunch
+        AppIconLaunchState.markDidFinishLaunching()
 
         DistributedNotificationCenter.default().addObserver(
             self,
@@ -2627,7 +2629,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         }
         NSWindow.allowsAutomaticWindowTabbing = false
         disableNativeTabbingShortcut()
-        ensureApplicationIcon()
+        if !isRunningUnderXCTest {
+            ensureApplicationIcon()
+        }
         if !isRunningUnderXCTest {
             configureUserNotifications()
             installMenuBarVisibilityObserver()
@@ -5871,7 +5875,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         var refreshedCount = 0
         forEachTerminalPanel { terminalPanel in
             terminalPanel.hostedView.refreshHostBackgroundAfterGhosttyConfigReload()
-            terminalPanel.hostedView.reconcileGeometryNow()
             terminalPanel.surface.forceRefresh(reason: "appDelegate.refreshAfterGhosttyConfigReload")
             refreshedCount += 1
         }
@@ -7100,11 +7103,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         cmuxConfigStore.wireDirectoryTracking(tabManager: tabManager)
         cmuxConfigStore.loadAll()
 
+        let fileExplorerState = FileExplorerState()
+
         let root = ContentView(updateViewModel: updateViewModel, windowId: windowId)
             .environmentObject(tabManager)
             .environmentObject(notificationStore)
             .environmentObject(sidebarState)
             .environmentObject(sidebarSelectionState)
+            .environmentObject(fileExplorerState)
             .environmentObject(cmuxConfigStore)
 
         // Use the current key window's size for new windows so Cmd+Shift+N
@@ -11062,6 +11068,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         // Check Show Notifications shortcut
         if matchConfiguredShortcut(event: event, action: .showNotifications) {
             toggleNotificationsPopover(animated: false, anchorView: fullscreenControlsViewModel?.notificationsAnchorView)
+            return true
+        }
+
+        if matchConfiguredShortcut(event: event, action: .toggleFileExplorer) {
+            // Dispatch async to escape AppKit's performKeyEquivalent animation context.
+            // Without this, NSAnimationContext implicitly animates the layout change.
+            DispatchQueue.main.async { [weak self] in
+                self?.fileExplorerState?.toggle()
+            }
             return true
         }
 
